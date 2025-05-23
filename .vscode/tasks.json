@@ -1,0 +1,27 @@
+{
+    // See https://code.visualstudio.com/docs/editor/tasks for more information
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build:rsmqt",
+            "type": "shell",
+            "command": "make build/rsmqt",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$go"
+            ]
+        },
+        {
+            "label": "build:rsmqt-debug",
+            "type": "shell",
+            "command": "CGO_CXXFLAGS=\"-std=c++17 -g\" go build -o build/rsmqt-debug -gcflags=\"all=-N -l\" .",
+            "group": "build",
+            "problemMatcher": [
+                "$go"
+            ]
+        }
+    ]
+}
