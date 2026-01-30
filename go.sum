@@ -1,2 +1,4 @@
 github.com/mappu/miqt v0.10.0 h1:w+ucRwdoIO7xS32us34lL2Mh0+aarywNpQz6c76ZSDY=
 github.com/mappu/miqt v0.10.0/go.mod h1:xFg7ADaO1QSkmXPsPODoKe/bydJpRG9fgCYyIDl/h1U=
+github.com/mappu/miqt v0.12.0 h1:bBMBDeACmV8TbdLfoN51la7kF6QT3sNAcG+ZdRDgmxU=
+github.com/mappu/miqt v0.12.0/go.mod h1:xFg7ADaO1QSkmXPsPODoKe/bydJpRG9fgCYyIDl/h1U=

@@ -1,2 +1,2 @@
-build/rsmqt:
-	CGO_CXXFLAGS="-std=c++17" go build -o build/rsmqt -ldflags="-s -w" .
+build/rsmqt: main.go
+	 CGO_CXXFLAGS="-std=c++17 -stdlib=libc++ -fPIC -Wno-ignored-attributes -D_Bool=bool" go build -o build/rsmqt -ldflags="-s -w" .
