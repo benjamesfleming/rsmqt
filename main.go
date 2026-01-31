@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -25,6 +26,15 @@ type RSMQTMainWindow struct {
 	// Right Bottom
 	msgTableView *qt.QTableView
 	msgModel     *qt.QStandardItemModel
+
+	// Actions
+	actConnect    *qt.QAction
+	actNewQueue   *qt.QAction
+	actDelQueue   *qt.QAction
+	actSendMsg    *qt.QAction
+	actEditQueue  *qt.QAction
+	actClearQueue *qt.QAction
+	actDelMsg     *qt.QAction
 }
 
 func NewRSMQTMainWindow() *RSMQTMainWindow {
@@ -33,6 +43,50 @@ func NewRSMQTMainWindow() *RSMQTMainWindow {
 	mw.SetWindowTitle("RSMQ UI")
 	mw.SetStyleSheet("background-color: #f1f2f6")
 	mw.SetGeometry(100, 100, 1000, 700)
+
+	// Actions
+	mw.actConnect = qt.NewQAction5("Connect", mw.QObject)
+	mw.actConnect.OnTriggered(func() { fmt.Println("Action: Connect") })
+
+	mw.actNewQueue = qt.NewQAction5("New Queue", mw.QObject)
+	mw.actNewQueue.OnTriggered(func() { fmt.Println("Action: New Queue") })
+
+	mw.actEditQueue = qt.NewQAction5("Edit Queue", mw.QObject)
+	mw.actEditQueue.OnTriggered(func() { fmt.Println("Action: Edit Queue") })
+	mw.actEditQueue.SetEnabled(false)
+
+	mw.actDelQueue = qt.NewQAction5("Delete Queue", mw.QObject)
+	mw.actDelQueue.OnTriggered(func() { fmt.Println("Action: Delete Queue") })
+	mw.actDelQueue.SetEnabled(false)
+
+	mw.actClearQueue = qt.NewQAction5("Clear Queue", mw.QObject)
+	mw.actClearQueue.OnTriggered(func() { fmt.Println("Action: Clear Queue") })
+	mw.actClearQueue.SetEnabled(false)
+
+	mw.actSendMsg = qt.NewQAction5("Send Message", mw.QObject)
+	mw.actSendMsg.OnTriggered(func() { fmt.Println("Action: Send Message") })
+	mw.actSendMsg.SetEnabled(false)
+
+	mw.actDelMsg = qt.NewQAction5("Delete Message", mw.QObject)
+	mw.actDelMsg.OnTriggered(func() { fmt.Println("Action: Delete Message") })
+	mw.actDelMsg.SetEnabled(false)
+
+	// Menu Bar
+	mb := mw.MenuBar()
+
+	fileMenu := mb.AddMenuWithTitle("File")
+	fileMenu.AddAction(mw.actConnect)
+
+	queueMenu := mb.AddMenuWithTitle("Queue")
+	queueMenu.AddAction(mw.actNewQueue)
+	queueMenu.AddSeparator()
+	queueMenu.AddAction(mw.actEditQueue)
+	queueMenu.AddAction(mw.actClearQueue)
+	queueMenu.AddAction(mw.actDelQueue)
+
+	msgMenu := mb.AddMenuWithTitle("Message")
+	msgMenu.AddAction(mw.actSendMsg)
+	msgMenu.AddAction(mw.actDelMsg)
 
 	// Central Widget
 	central := qt.NewQWidget(mw.QWidget)
@@ -77,7 +131,9 @@ func NewRSMQTMainWindow() *RSMQTMainWindow {
 	mw.msgModel.SetHorizontalHeaderLabels([]string{"ID", "Sent At", "Visible At", "Read Count", "Message"})
 	mw.msgTableView.SetModel(mw.msgModel.QAbstractItemModel)
 	mw.msgTableView.HorizontalHeader().SetStretchLastSection(true)
-	mw.msgTableView.SetStyleSheet("background-color: white")
+	mw.msgTableView.SetSelectionMode(qt.QAbstractItemView__SingleSelection)
+	mw.msgTableView.SetSelectionBehavior(qt.QAbstractItemView__SelectRows)
+	mw.msgTableView.SetStyleSheet("QTableView { background-color: white; } QTableView::item:selected { background-color: #f5f5f5; color: black; } QTableView::item:focus { background-color: #0078d7; color: white; }")
 
 	splitter.AddWidget(mw.msgTableView.QWidget)
 
@@ -89,12 +145,28 @@ func NewRSMQTMainWindow() *RSMQTMainWindow {
 	mw.client = rsmq.NewClient("localhost:6379", "rsmq:")
 
 	// Signals
-	mw.queueListView.SelectionModel().OnCurrentChanged(func(current, previous *qt.QModelIndex) {
-		if !current.IsValid() {
+	mw.queueListView.SelectionModel().OnSelectionChanged(func(selected, deselected *qt.QItemSelection) {
+		indexes := mw.queueListView.SelectionModel().SelectedIndexes()
+		hasSelection := len(indexes) > 0
+
+		mw.actEditQueue.SetEnabled(hasSelection)
+		mw.actDelQueue.SetEnabled(hasSelection)
+		mw.actClearQueue.SetEnabled(hasSelection)
+		mw.actSendMsg.SetEnabled(hasSelection)
+
+		if !hasSelection {
+			mw.statsModel.SetRowCount(0)
+			mw.msgModel.SetRowCount(0)
 			return
 		}
-		qname := current.Data().ToString()
+
+		idx := indexes[0]
+		qname := idx.Data().ToString()
 		mw.UpdateQueueData(qname)
+	})
+
+	mw.msgTableView.SelectionModel().OnSelectionChanged(func(selected, deselected *qt.QItemSelection) {
+		mw.actDelMsg.SetEnabled(mw.msgTableView.SelectionModel().HasSelection())
 	})
 
 	mw.RefreshQueues()
