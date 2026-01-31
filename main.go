@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -279,17 +278,57 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	mw.actNewQueue.OnTriggered(func() {
 		dlg := NewQueueDialog(mw.QWidget, "New Queue", false)
 		if dlg.Exec() == int(qt.QDialog__Accepted) {
-			fmt.Printf("Creating Queue: Name=%s, VT=%d, Delay=%d, MaxSize=%d\n",
-				dlg.Name.Text(), dlg.Vt.Value(), dlg.Delay.Value(), dlg.MaxSize.Value())
+			name := dlg.Name.Text()
+			vt := dlg.Vt.Value()
+			delay := dlg.Delay.Value()
+			maxsize := dlg.MaxSize.Value()
+
+			err := mw.client.CreateQueue(name, vt, delay, maxsize)
+			if err != nil {
+				qt.QMessageBox_Critical(mw.QWidget, "Error", err.Error())
+			} else {
+				mw.RefreshQueues()
+			}
 		}
 	})
 
 	mw.actDelQueue = qt.NewQAction5("Delete Queue", mw.QObject)
-	mw.actDelQueue.OnTriggered(func() { fmt.Println("Action: Delete Queue") })
+	mw.actDelQueue.OnTriggered(func() {
+		if mw.currentQueueStats == nil {
+			return
+		}
+		qname := mw.currentQueueStats.Name
+		ret := qt.QMessageBox_Question(mw.QWidget, "Confirm Delete", "Are you sure you want to delete queue '"+qname+"'?")
+		if ret == qt.QMessageBox__Yes {
+			err := mw.client.DeleteQueue(qname)
+			if err != nil {
+				qt.QMessageBox_Critical(mw.QWidget, "Error", err.Error())
+			} else {
+				mw.currentQueueStats = nil
+				mw.statsModel.SetRowCount(0)
+				mw.msgModel.SetRowCount(0)
+				mw.RefreshQueues()
+			}
+		}
+	})
 	mw.actDelQueue.SetEnabled(false)
 
 	mw.actClearQueue = qt.NewQAction5("Clear Queue", mw.QObject)
-	mw.actClearQueue.OnTriggered(func() { fmt.Println("Action: Clear Queue") })
+	mw.actClearQueue.OnTriggered(func() {
+		if mw.currentQueueStats == nil {
+			return
+		}
+		qname := mw.currentQueueStats.Name
+		ret := qt.QMessageBox_Question(mw.QWidget, "Confirm Clear", "Are you sure you want to clear queue '"+qname+"'? This will delete all messages.")
+		if ret == qt.QMessageBox__Yes {
+			err := mw.client.ClearQueue(qname)
+			if err != nil {
+				qt.QMessageBox_Critical(mw.QWidget, "Error", "Failed to clear queue: "+err.Error())
+			} else {
+				mw.UpdateQueueData(qname)
+			}
+		}
+	})
 	mw.actClearQueue.SetEnabled(false)
 
 	mw.actSendMsg = qt.NewQAction5("Send Message", mw.QObject)
@@ -299,14 +338,40 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 		}
 		dlg := NewSendMessageDialog(mw.QWidget)
 		if dlg.Exec() == int(qt.QDialog__Accepted) {
-			fmt.Printf("Sending Message to %s: %s\n",
-				mw.currentQueueStats.Name, dlg.Message.ToPlainText())
+			msg := dlg.Message.ToPlainText()
+			err := mw.client.SendMessage(mw.currentQueueStats.Name, msg)
+			if err != nil {
+				qt.QMessageBox_Critical(mw.QWidget, "Error", err.Error())
+			} else {
+				mw.UpdateQueueData(mw.currentQueueStats.Name)
+			}
 		}
 	})
 	mw.actSendMsg.SetEnabled(false)
 
 	mw.actDelMsg = qt.NewQAction5("Delete Message", mw.QObject)
-	mw.actDelMsg.OnTriggered(func() { fmt.Println("Action: Delete Message") })
+	mw.actDelMsg.OnTriggered(func() {
+		if mw.currentQueueStats == nil {
+			return
+		}
+		// Get selected message ID
+		indexes := mw.msgTableView.SelectionModel().SelectedIndexes()
+		if len(indexes) == 0 {
+			return
+		}
+
+		// Use the row of the first selected item to get the ID from column 0
+		row := indexes[0].Row()
+		idIdx := mw.msgModel.Index(row, 0, qt.NewQModelIndex())
+		id := mw.msgModel.Data(idIdx, int(qt.DisplayRole)).ToString()
+
+		err := mw.client.DeleteMessage(mw.currentQueueStats.Name, id)
+		if err != nil {
+			qt.QMessageBox_Critical(mw.QWidget, "Error", err.Error())
+		} else {
+			mw.UpdateQueueData(mw.currentQueueStats.Name)
+		}
+	})
 	mw.actDelMsg.SetEnabled(false)
 
 	// Menu Bar
@@ -459,8 +524,8 @@ func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
 		for _, m := range msgs {
 			items := []*qt.QStandardItem{
 				qt.NewQStandardItem2(m.ID),
-				qt.NewQStandardItem2(time.UnixMicro(m.Sent).Format(time.DateTime)),
-				qt.NewQStandardItem2(time.UnixMilli(m.VisibleAt).Format(time.DateTime)),
+				qt.NewQStandardItem2(m.Sent.Format(time.DateTime)),
+				qt.NewQStandardItem2(m.VisibleAt.Format(time.DateTime)),
 				qt.NewQStandardItem2(strconv.Itoa(m.Rc)),
 				qt.NewQStandardItem2(m.Body),
 			}
