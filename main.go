@@ -10,6 +10,129 @@ import (
 	qt "github.com/mappu/miqt/qt6"
 )
 
+type Config struct {
+	Host string
+	Port string
+	Pass string
+	DB   int
+	NS   string
+}
+
+var globalCfg = Config{
+	Host: "localhost",
+	Port: "6379",
+	Pass: "",
+	DB:   0,
+	NS:   "rsmq:",
+}
+
+type ConnectWindow struct {
+	*qt.QWidget
+
+	hostInput *qt.QLineEdit
+	portInput *qt.QLineEdit
+	passInput *qt.QLineEdit
+	dbInput   *qt.QComboBox
+	nsInput   *qt.QLineEdit
+
+	connectBtn *qt.QPushButton
+	testBtn    *qt.QPushButton
+
+	onConnect func()
+}
+
+func NewConnectWindow(onConnect func()) *ConnectWindow {
+	cw := &ConnectWindow{}
+	cw.QWidget = qt.NewQWidget2()
+	cw.SetWindowTitle("RSMQ Connection")
+	cw.SetGeometry(300, 300, 300, 250)
+	cw.onConnect = onConnect
+
+	layout := qt.NewQVBoxLayout(cw.QWidget)
+
+	tabs := qt.NewQTabWidget(cw.QWidget)
+	layout.AddWidget(tabs.QWidget)
+
+	// Basic Tab
+	basicTab := qt.NewQWidget(tabs.QWidget)
+	basicForm := qt.NewQFormLayout(basicTab)
+
+	cw.hostInput = qt.NewQLineEdit(basicTab)
+	cw.hostInput.SetText(globalCfg.Host)
+	basicForm.AddRow3("Host:", cw.hostInput.QWidget)
+
+	cw.portInput = qt.NewQLineEdit(basicTab)
+	cw.portInput.SetText(globalCfg.Port)
+	basicForm.AddRow3("Port:", cw.portInput.QWidget)
+
+	cw.passInput = qt.NewQLineEdit(basicTab)
+	cw.passInput.SetEchoMode(qt.QLineEdit__Password)
+	cw.passInput.SetText(globalCfg.Pass)
+	basicForm.AddRow3("Password:", cw.passInput.QWidget)
+
+	cw.dbInput = qt.NewQComboBox(basicTab)
+	for i := 0; i < 16; i++ {
+		cw.dbInput.AddItem(strconv.Itoa(i))
+	}
+	cw.dbInput.SetCurrentIndex(globalCfg.DB)
+	basicForm.AddRow3("DB:", cw.dbInput.QWidget)
+
+	cw.nsInput = qt.NewQLineEdit(basicTab)
+	cw.nsInput.SetText(globalCfg.NS)
+	basicForm.AddRow3("Namespace:", cw.nsInput.QWidget)
+
+	basicTab.SetLayout(basicForm.QLayout)
+	tabs.AddTab(basicTab, "Basic")
+
+	// Advanced Tab
+	advTab := qt.NewQWidget(tabs.QWidget)
+	advForm := qt.NewQFormLayout(advTab)
+
+	sshHost := qt.NewQLineEdit(advTab)
+	advForm.AddRow3("SSH Host:", sshHost.QWidget)
+
+	sshPort := qt.NewQLineEdit(advTab)
+	sshPort.SetText("22")
+	advForm.AddRow3("SSH Port:", sshPort.QWidget)
+
+	sshUser := qt.NewQLineEdit(advTab)
+	advForm.AddRow3("SSH User:", sshUser.QWidget)
+
+	sshPass := qt.NewQLineEdit(advTab)
+	sshPass.SetEchoMode(qt.QLineEdit__Password)
+	advForm.AddRow3("SSH Key/Pass:", sshPass.QWidget)
+
+	advTab.SetLayout(advForm.QLayout)
+	tabs.AddTab(advTab, "Advanced")
+
+	// Buttons
+	btnLayout := qt.NewQHBoxLayout(nil)
+	cw.testBtn = qt.NewQPushButton3("Test Connection")
+	cw.connectBtn = qt.NewQPushButton3("Connect")
+
+	btnLayout.AddWidget(cw.testBtn.QWidget)
+	btnLayout.AddWidget(cw.connectBtn.QWidget)
+	layout.AddLayout(btnLayout.QLayout)
+
+	cw.connectBtn.OnClicked(func() {
+		globalCfg.Host = cw.hostInput.Text()
+		globalCfg.Port = cw.portInput.Text()
+		globalCfg.Pass = cw.passInput.Text()
+		globalCfg.DB = cw.dbInput.CurrentIndex()
+		globalCfg.NS = cw.nsInput.Text()
+
+		if cw.onConnect != nil {
+			cw.onConnect()
+		}
+	})
+
+	cw.testBtn.OnClicked(func() {
+		fmt.Println("Test Connection clicked (Stub)")
+	})
+
+	return cw
+}
+
 type RSMQTMainWindow struct {
 	*qt.QMainWindow
 
@@ -28,7 +151,7 @@ type RSMQTMainWindow struct {
 	msgModel     *qt.QStandardItemModel
 
 	// Actions
-	actConnect    *qt.QAction
+	actDisconnect *qt.QAction
 	actNewQueue   *qt.QAction
 	actDelQueue   *qt.QAction
 	actSendMsg    *qt.QAction
@@ -37,7 +160,7 @@ type RSMQTMainWindow struct {
 	actDelMsg     *qt.QAction
 }
 
-func NewRSMQTMainWindow() *RSMQTMainWindow {
+func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	mw := &RSMQTMainWindow{}
 	mw.QMainWindow = qt.NewQMainWindow2()
 	mw.SetWindowTitle("RSMQ UI")
@@ -45,8 +168,12 @@ func NewRSMQTMainWindow() *RSMQTMainWindow {
 	mw.SetGeometry(100, 100, 1000, 700)
 
 	// Actions
-	mw.actConnect = qt.NewQAction5("Connect", mw.QObject)
-	mw.actConnect.OnTriggered(func() { fmt.Println("Action: Connect") })
+	mw.actDisconnect = qt.NewQAction5("Disconnect", mw.QObject)
+	mw.actDisconnect.OnTriggered(func() {
+		if onDisconnect != nil {
+			onDisconnect()
+		}
+	})
 
 	mw.actNewQueue = qt.NewQAction5("New Queue", mw.QObject)
 	mw.actNewQueue.OnTriggered(func() { fmt.Println("Action: New Queue") })
@@ -75,7 +202,7 @@ func NewRSMQTMainWindow() *RSMQTMainWindow {
 	mb := mw.MenuBar()
 
 	fileMenu := mb.AddMenuWithTitle("File")
-	fileMenu.AddAction(mw.actConnect)
+	fileMenu.AddAction(mw.actDisconnect)
 
 	queueMenu := mb.AddMenuWithTitle("Queue")
 	queueMenu.AddAction(mw.actNewQueue)
@@ -142,7 +269,8 @@ func NewRSMQTMainWindow() *RSMQTMainWindow {
 	splitter.SetStretchFactor(1, 3)
 
 	// Initialize Client
-	mw.client = rsmq.NewClient("localhost:6379", "rsmq:")
+	addr := globalCfg.Host + ":" + globalCfg.Port
+	mw.client = rsmq.NewClient(addr, globalCfg.Pass, globalCfg.DB, globalCfg.NS)
 
 	// Signals
 	mw.queueListView.SelectionModel().OnSelectionChanged(func(selected, deselected *qt.QItemSelection) {
@@ -232,8 +360,18 @@ func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
 func main() {
 	qt.NewQApplication(os.Args)
 
-	window := NewRSMQTMainWindow()
-	window.Show()
+	var connectWindow *ConnectWindow
+	var mainWindow *RSMQTMainWindow
+
+	connectWindow = NewConnectWindow(func() {
+		mainWindow = NewRSMQTMainWindow(func() {
+			mainWindow.Close()
+			connectWindow.Show()
+		})
+		mainWindow.Show()
+		connectWindow.Close()
+	})
+	connectWindow.Show()
 
 	qt.QApplication_Exec()
 }

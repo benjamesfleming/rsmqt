@@ -13,12 +13,14 @@ type Client struct {
 	ns  string
 }
 
-func NewClient(addr string, ns string) *Client {
+func NewClient(addr, password string, db int, ns string) *Client {
 	if ns == "" {
 		ns = "rsmq:"
 	}
 	rdb := redis.NewClient(&redis.Options{
-		Addr: addr,
+		Addr:     addr,
+		Password: password,
+		DB:       db,
 	})
 	return &Client{
 		rdb: rdb,
