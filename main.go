@@ -159,10 +159,85 @@ func NewConnectWindow(onConnect func()) *ConnectWindow {
 	return cw
 }
 
+type QueueDialog struct {
+	*qt.QDialog
+	Name    *qt.QLineEdit
+	Vt      *qt.QSpinBox
+	Delay   *qt.QSpinBox
+	MaxSize *qt.QSpinBox
+}
+
+func NewQueueDialog(parent *qt.QWidget, title string, isEdit bool) *QueueDialog {
+	qd := &QueueDialog{}
+	qd.QDialog = qt.NewQDialog(parent)
+	qd.SetWindowTitle(title)
+
+	layout := qt.NewQFormLayout(qd.QWidget)
+
+	qd.Name = qt.NewQLineEdit(qd.QWidget)
+	if isEdit {
+		qd.Name.SetReadOnly(true)
+	}
+	layout.AddRow3("Name:", qd.Name.QWidget)
+
+	qd.Vt = qt.NewQSpinBox(qd.QWidget)
+	qd.Vt.SetRange(0, 999999)
+	qd.Vt.SetValue(30)
+	layout.AddRow3("Visibility Timeout (s):", qd.Vt.QWidget)
+
+	qd.Delay = qt.NewQSpinBox(qd.QWidget)
+	qd.Delay.SetRange(0, 999999)
+	qd.Delay.SetValue(0)
+	layout.AddRow3("Delay (s):", qd.Delay.QWidget)
+
+	qd.MaxSize = qt.NewQSpinBox(qd.QWidget)
+	qd.MaxSize.SetRange(1024, 65536*100)
+	qd.MaxSize.SetValue(65536)
+	layout.AddRow3("Max Message Size (bytes):", qd.MaxSize.QWidget)
+
+	btns := qt.NewQDialogButtonBox(qd.QWidget)
+	btns.SetStandardButtons(qt.QDialogButtonBox__Ok | qt.QDialogButtonBox__Cancel)
+	layout.AddWidget(btns.QWidget)
+
+	btns.OnAccepted(qd.Accept)
+	btns.OnRejected(qd.Reject)
+
+	return qd
+}
+
+type SendMessageDialog struct {
+	*qt.QDialog
+	Message *qt.QTextEdit
+}
+
+func NewSendMessageDialog(parent *qt.QWidget) *SendMessageDialog {
+	smd := &SendMessageDialog{}
+	smd.QDialog = qt.NewQDialog(parent)
+	smd.SetWindowTitle("Send Message")
+	smd.SetMinimumSize2(400, 300)
+
+	layout := qt.NewQVBoxLayout(smd.QWidget)
+
+	smd.Message = qt.NewQTextEdit(smd.QWidget)
+	smd.Message.SetStyleSheet("background-color: white;")
+	layout.AddWidget(smd.Message.QWidget)
+
+	btns := qt.NewQDialogButtonBox(smd.QWidget)
+	btns.SetStandardButtons(qt.QDialogButtonBox__Ok | qt.QDialogButtonBox__Cancel)
+	layout.AddWidget(btns.QWidget)
+
+	btns.OnAccepted(smd.Accept)
+	btns.OnRejected(smd.Reject)
+
+	return smd
+}
+
 type RSMQTMainWindow struct {
 	*qt.QMainWindow
 
 	client *rsmq.Client
+
+	currentQueueStats *rsmq.QueueStats
 
 	// Left
 	queueListView  *qt.QListView
@@ -181,7 +256,6 @@ type RSMQTMainWindow struct {
 	actNewQueue   *qt.QAction
 	actDelQueue   *qt.QAction
 	actSendMsg    *qt.QAction
-	actEditQueue  *qt.QAction
 	actClearQueue *qt.QAction
 	actDelMsg     *qt.QAction
 }
@@ -202,11 +276,13 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	})
 
 	mw.actNewQueue = qt.NewQAction5("New Queue", mw.QObject)
-	mw.actNewQueue.OnTriggered(func() { fmt.Println("Action: New Queue") })
-
-	mw.actEditQueue = qt.NewQAction5("Edit Queue", mw.QObject)
-	mw.actEditQueue.OnTriggered(func() { fmt.Println("Action: Edit Queue") })
-	mw.actEditQueue.SetEnabled(false)
+	mw.actNewQueue.OnTriggered(func() {
+		dlg := NewQueueDialog(mw.QWidget, "New Queue", false)
+		if dlg.Exec() == int(qt.QDialog__Accepted) {
+			fmt.Printf("Creating Queue: Name=%s, VT=%d, Delay=%d, MaxSize=%d\n",
+				dlg.Name.Text(), dlg.Vt.Value(), dlg.Delay.Value(), dlg.MaxSize.Value())
+		}
+	})
 
 	mw.actDelQueue = qt.NewQAction5("Delete Queue", mw.QObject)
 	mw.actDelQueue.OnTriggered(func() { fmt.Println("Action: Delete Queue") })
@@ -217,7 +293,16 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	mw.actClearQueue.SetEnabled(false)
 
 	mw.actSendMsg = qt.NewQAction5("Send Message", mw.QObject)
-	mw.actSendMsg.OnTriggered(func() { fmt.Println("Action: Send Message") })
+	mw.actSendMsg.OnTriggered(func() {
+		if mw.currentQueueStats == nil {
+			return
+		}
+		dlg := NewSendMessageDialog(mw.QWidget)
+		if dlg.Exec() == int(qt.QDialog__Accepted) {
+			fmt.Printf("Sending Message to %s: %s\n",
+				mw.currentQueueStats.Name, dlg.Message.ToPlainText())
+		}
+	})
 	mw.actSendMsg.SetEnabled(false)
 
 	mw.actDelMsg = qt.NewQAction5("Delete Message", mw.QObject)
@@ -233,7 +318,6 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	queueMenu := mb.AddMenuWithTitle("Queue")
 	queueMenu.AddAction(mw.actNewQueue)
 	queueMenu.AddSeparator()
-	queueMenu.AddAction(mw.actEditQueue)
 	queueMenu.AddAction(mw.actClearQueue)
 	queueMenu.AddAction(mw.actDelQueue)
 
@@ -272,11 +356,12 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	mw.statsTableView.VerticalHeader().SetVisible(false)
 	mw.statsTableView.SetEditTriggers(qt.QAbstractItemView__NoEditTriggers)
 	mw.statsTableView.SetSelectionMode(qt.QAbstractItemView__SingleSelection)
-	mw.statsTableView.SetStyleSheet("background-color: white")
+	mw.statsTableView.SetSelectionBehavior(qt.QAbstractItemView__SelectRows)
+	mw.statsTableView.SetStyleSheet("QTableView { background-color: white; } QTableView::item:selected { background-color: #f5f5f5; color: black; } QTableView::item:focus { background-color: #0078d7; color: white; }")
 
 	leftSplitter.AddWidget(mw.statsTableView.QWidget)
-	leftSplitter.SetStretchFactor(0, 1)
-	leftSplitter.SetStretchFactor(1, 0)
+	leftSplitter.SetStretchFactor(0, 6)
+	leftSplitter.SetStretchFactor(1, 4)
 
 	// Right Pane: Items
 	mw.msgTableView = qt.NewQTableView(splitter.QWidget)
@@ -303,7 +388,6 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 		indexes := mw.queueListView.SelectionModel().SelectedIndexes()
 		hasSelection := len(indexes) > 0
 
-		mw.actEditQueue.SetEnabled(hasSelection)
 		mw.actDelQueue.SetEnabled(hasSelection)
 		mw.actClearQueue.SetEnabled(hasSelection)
 		mw.actSendMsg.SetEnabled(hasSelection)
@@ -342,6 +426,7 @@ func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
 	stats, err := mw.client.GetQueueStats(qname)
 	mw.statsModel.SetRowCount(0)
 	if err == nil {
+		mw.currentQueueStats = stats
 		data := [][2]string{
 			{"Visibility Timeout", strconv.Itoa(stats.Vt)},
 			{"Delay", strconv.Itoa(stats.Delay)},
@@ -359,6 +444,7 @@ func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
 			mw.statsModel.AppendRow(items)
 		}
 	} else {
+		mw.currentQueueStats = nil
 		items := []*qt.QStandardItem{
 			qt.NewQStandardItem2("Error"),
 			qt.NewQStandardItem2("Could not fetch stats"),
