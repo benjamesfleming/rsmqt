@@ -50,6 +50,10 @@ type Message struct {
 	VisibleAt int64
 }
 
+func (c *Client) TestConnection() error {
+	return c.rdb.Ping().Err()
+}
+
 func (c *Client) ListQueues() ([]string, error) {
 	return c.rdb.SMembers(c.ns + "QUEUES").Result()
 }

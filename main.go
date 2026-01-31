@@ -127,7 +127,33 @@ func NewConnectWindow(onConnect func()) *ConnectWindow {
 	})
 
 	cw.testBtn.OnClicked(func() {
-		fmt.Println("Test Connection clicked (Stub)")
+		cw.testBtn.SetEnabled(false)
+		cw.testBtn.Repaint() // Ensure UI updates
+
+		// Mock config for testing
+		testHost := cw.hostInput.Text()
+		testPort := cw.portInput.Text()
+		testPass := cw.passInput.Text()
+		testDB := cw.dbInput.CurrentIndex()
+		testNS := cw.nsInput.Text()
+
+		testAddr := testHost + ":" + testPort
+		client := rsmq.NewClient(testAddr, testPass, testDB, testNS)
+
+		err := client.TestConnection()
+
+		var toolTip string
+		if err != nil {
+			toolTip = "❌ Error: " + err.Error()
+		} else {
+			toolTip = "✅ Connection Successful"
+		}
+		cw.testBtn.SetToolTip(toolTip)
+
+		// Force tooltip to show immediately
+		qt.QToolTip_ShowText(qt.QCursor_Pos().OperatorMinusAssign(qt.NewQPoint2(0, 25)), cw.testBtn.ToolTip())
+
+		cw.testBtn.SetEnabled(true)
 	})
 
 	return cw
@@ -358,7 +384,8 @@ func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
 }
 
 func main() {
-	qt.NewQApplication(os.Args)
+	app := qt.NewQApplication(os.Args)
+	app.SetStyleSheet("QToolTip { background-color: #333; color: white; padding: 2px; }")
 
 	var connectWindow *ConnectWindow
 	var mainWindow *RSMQTMainWindow
