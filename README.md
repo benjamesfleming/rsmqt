@@ -1,17 +1,7 @@
 # RSMQT
 
-[RSMQ](https://github.com/smrchy/rsmq) management interface using [MIQT](https://github.com/mappu/miqt)
+RSMQT is a cross-platform desktop GUI application for managing [RSMQ](https://github.com/smrchy/rsmq) (Redis Simple Message Queue) instances. It is built using **Go** and the [MIQT](https://github.com/mappu/miqt) Qt bindings.
 
-## Installation
+## License
 
-## Building From Source
-
-**MacOS**
-
-```bash
-brew install go
-brew install qt
-brew install gcc
-
-make
-```
+MIT License. See [LICENSE](LICENSE) for details.
