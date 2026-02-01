@@ -26,6 +26,7 @@ type Config struct {
 	SSHPass     string
 	SSHKeyPath  string
 	SSHKeyPassphrase string
+	RefreshInterval  int
 }
 
 var globalCfg = Config{
@@ -34,6 +35,7 @@ var globalCfg = Config{
 	Pass: "",
 	DB:   0,
 	NS:   "rsmq:",
+	RefreshInterval: 1,
 
 	SSHEnabled:  false,
 	SSHHost:     "",
@@ -62,6 +64,8 @@ type ConnectWindow struct {
 	sshKeyPathInput  *qt.QLineEdit
 	sshKeyBrowseBtn  *qt.QPushButton
 	sshContainer     *qt.QWidget
+
+	refreshIntervalInput *qt.QSpinBox
 
 	connectBtn *qt.QPushButton
 	testBtn    *qt.QPushButton
@@ -192,7 +196,20 @@ func NewConnectWindow(onConnect func()) *ConnectWindow {
 	advLayout.AddStretch()
 
 	advTab.SetLayout(advLayout.QLayout)
-	tabs.AddTab(advTab, "Advanced")
+	tabs.AddTab(advTab, "SSH Tunnel")
+
+	// Preferences Tab
+	prefTab := qt.NewQWidget(tabs.QWidget)
+	prefForm := qt.NewQFormLayout(prefTab)
+
+	cw.refreshIntervalInput = qt.NewQSpinBox(prefTab)
+	cw.refreshIntervalInput.SetRange(1, 3600)
+	cw.refreshIntervalInput.SetValue(globalCfg.RefreshInterval)
+	cw.refreshIntervalInput.SetSuffix(" s")
+	prefForm.AddRow3("Refresh Interval:", cw.refreshIntervalInput.QWidget)
+
+	prefTab.SetLayout(prefForm.QLayout)
+	tabs.AddTab(prefTab, "Preferences")
 
 	// SSH Logic
 	updateSSHState := func() {
@@ -246,6 +263,7 @@ func NewConnectWindow(onConnect func()) *ConnectWindow {
 		}
 		globalCfg.SSHPass = cw.sshPassInput.Text()
 		globalCfg.SSHKeyPath = cw.sshKeyPathInput.Text()
+		globalCfg.RefreshInterval = cw.refreshIntervalInput.Value()
 
 		if cw.onConnect != nil {
 			cw.onConnect()
@@ -436,6 +454,8 @@ type RSMQTMainWindow struct {
 	actSendMsg    *qt.QAction
 	actClearQueue *qt.QAction
 	actDelMsg     *qt.QAction
+
+	refreshTimer *qt.QTimer
 }
 
 func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
@@ -552,6 +572,15 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 		}
 	})
 	mw.actDelMsg.SetEnabled(false)
+
+	// Timer
+	mw.refreshTimer = qt.NewQTimer2(mw.QObject)
+	mw.refreshTimer.OnTimeout(func() {
+		if mw.currentQueueStats != nil {
+			mw.UpdateQueueData(mw.currentQueueStats.Name)
+		}
+	})
+	mw.refreshTimer.Start(globalCfg.RefreshInterval * 1000)
 
 	// Menu Bar
 	mb := mw.MenuBar()
