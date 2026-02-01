@@ -1,8 +1,10 @@
 package main
 
 import (
+	"net"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/benjamesfleming/rsmqt/lib/rsmq"
@@ -15,6 +17,15 @@ type Config struct {
 	Pass string
 	DB   int
 	NS   string
+
+	SSHEnabled  bool
+	SSHHost     string
+	SSHPort     string
+	SSHUser     string
+	SSHAuthType string // "password" or "key"
+	SSHPass     string
+	SSHKeyPath  string
+	SSHKeyPassphrase string
 }
 
 var globalCfg = Config{
@@ -23,6 +34,14 @@ var globalCfg = Config{
 	Pass: "",
 	DB:   0,
 	NS:   "rsmq:",
+
+	SSHEnabled:  false,
+	SSHHost:     "",
+	SSHPort:     "22",
+	SSHUser:     "",
+	SSHAuthType: "password",
+	SSHPass:     "",
+	SSHKeyPath:  "",
 }
 
 type ConnectWindow struct {
@@ -33,6 +52,16 @@ type ConnectWindow struct {
 	passInput *qt.QLineEdit
 	dbInput   *qt.QComboBox
 	nsInput   *qt.QLineEdit
+
+	sshEnabledCheck  *qt.QCheckBox
+	sshHostInput     *qt.QLineEdit
+	sshPortInput     *qt.QLineEdit
+	sshUserInput     *qt.QLineEdit
+	sshAuthTypeCombo *qt.QComboBox
+	sshPassInput     *qt.QLineEdit
+	sshKeyPathInput  *qt.QLineEdit
+	sshKeyBrowseBtn  *qt.QPushButton
+	sshContainer     *qt.QWidget
 
 	connectBtn *qt.QPushButton
 	testBtn    *qt.QPushButton
@@ -85,24 +114,110 @@ func NewConnectWindow(onConnect func()) *ConnectWindow {
 
 	// Advanced Tab
 	advTab := qt.NewQWidget(tabs.QWidget)
-	advForm := qt.NewQFormLayout(advTab)
+	advLayout := qt.NewQVBoxLayout(advTab)
 
-	sshHost := qt.NewQLineEdit(advTab)
-	advForm.AddRow3("SSH Host:", sshHost.QWidget)
+	cw.sshEnabledCheck = qt.NewQCheckBox(advTab)
+	cw.sshEnabledCheck.SetText("Use SSH Tunnel")
+	cw.sshEnabledCheck.SetChecked(globalCfg.SSHEnabled)
+	advLayout.AddWidget(cw.sshEnabledCheck.QWidget)
 
-	sshPort := qt.NewQLineEdit(advTab)
-	sshPort.SetText("22")
-	advForm.AddRow3("SSH Port:", sshPort.QWidget)
+	cw.sshContainer = qt.NewQWidget(advTab)
+	sshLayout := qt.NewQVBoxLayout(cw.sshContainer)
+	sshLayout.SetContentsMargins(0, 0, 0, 0)
 
-	sshUser := qt.NewQLineEdit(advTab)
-	advForm.AddRow3("SSH User:", sshUser.QWidget)
+	// Helper to create rows
+	createRow := func(label string, widget *qt.QWidget) *qt.QWidget {
+		row := qt.NewQWidget(cw.sshContainer)
+		l := qt.NewQHBoxLayout(row)
+		l.SetContentsMargins(0, 0, 0, 0)
+		lbl := qt.NewQLabel(row)
+		lbl.SetText(label)
+		lbl.SetFixedWidth(80)
+		l.AddWidget(lbl.QWidget)
+		l.AddWidget(widget)
+		return row
+	}
 
-	sshPass := qt.NewQLineEdit(advTab)
-	sshPass.SetEchoMode(qt.QLineEdit__Password)
-	advForm.AddRow3("SSH Key/Pass:", sshPass.QWidget)
+	cw.sshHostInput = qt.NewQLineEdit(cw.sshContainer)
+	cw.sshHostInput.SetText(globalCfg.SSHHost)
+	sshLayout.AddWidget(createRow("SSH Host:", cw.sshHostInput.QWidget))
 
-	advTab.SetLayout(advForm.QLayout)
+	cw.sshPortInput = qt.NewQLineEdit(cw.sshContainer)
+	cw.sshPortInput.SetText(globalCfg.SSHPort)
+	sshLayout.AddWidget(createRow("SSH Port:", cw.sshPortInput.QWidget))
+
+	cw.sshUserInput = qt.NewQLineEdit(cw.sshContainer)
+	cw.sshUserInput.SetText(globalCfg.SSHUser)
+	sshLayout.AddWidget(createRow("SSH User:", cw.sshUserInput.QWidget))
+
+	cw.sshAuthTypeCombo = qt.NewQComboBox(cw.sshContainer)
+	cw.sshAuthTypeCombo.AddItem("Password")
+	cw.sshAuthTypeCombo.AddItem("Private Key")
+	if globalCfg.SSHAuthType == "key" {
+		cw.sshAuthTypeCombo.SetCurrentIndex(1)
+	} else {
+		cw.sshAuthTypeCombo.SetCurrentIndex(0)
+	}
+	sshLayout.AddWidget(createRow("Auth Type:", cw.sshAuthTypeCombo.QWidget))
+
+	// Password Row
+	cw.sshPassInput = qt.NewQLineEdit(cw.sshContainer)
+	cw.sshPassInput.SetEchoMode(qt.QLineEdit__Password)
+	cw.sshPassInput.SetText(globalCfg.SSHPass)
+	passRow := createRow("Password:", cw.sshPassInput.QWidget)
+	sshLayout.AddWidget(passRow)
+
+	// Key Row
+	keyWidget := qt.NewQWidget(cw.sshContainer)
+	keyLayout := qt.NewQHBoxLayout(keyWidget)
+	keyLayout.SetContentsMargins(0, 0, 0, 0)
+	cw.sshKeyPathInput = qt.NewQLineEdit(keyWidget)
+	cw.sshKeyPathInput.SetText(globalCfg.SSHKeyPath)
+	cw.sshKeyBrowseBtn = qt.NewQPushButton3("Browse")
+	keyLayout.AddWidget(cw.sshKeyPathInput.QWidget)
+	keyLayout.AddWidget(cw.sshKeyBrowseBtn.QWidget)
+
+	keyRow := qt.NewQWidget(cw.sshContainer)
+	keyRowLayout := qt.NewQHBoxLayout(keyRow)
+	keyRowLayout.SetContentsMargins(0, 0, 0, 0)
+	keyLbl := qt.NewQLabel(keyRow)
+	keyLbl.SetText("Private Key:")
+	keyLbl.SetFixedWidth(80)
+	keyRowLayout.AddWidget(keyLbl.QWidget)
+	keyRowLayout.AddWidget(keyWidget)
+	sshLayout.AddWidget(keyRow)
+
+	cw.sshContainer.SetLayout(sshLayout.QLayout)
+	advLayout.AddWidget(cw.sshContainer)
+	advLayout.AddStretch()
+
+	advTab.SetLayout(advLayout.QLayout)
 	tabs.AddTab(advTab, "Advanced")
+
+	// SSH Logic
+	updateSSHState := func() {
+		enabled := cw.sshEnabledCheck.IsChecked()
+		cw.sshContainer.SetEnabled(enabled)
+
+		isKey := cw.sshAuthTypeCombo.CurrentIndex() == 1
+		if isKey {
+			passRow.Hide()
+			keyRow.Show()
+		} else {
+			passRow.Show()
+			keyRow.Hide()
+		}
+	}
+	cw.sshEnabledCheck.OnToggled(func(checked bool) { updateSSHState() })
+	cw.sshAuthTypeCombo.OnCurrentIndexChanged(func(index int) { updateSSHState() })
+	updateSSHState() // Initial state
+
+	cw.sshKeyBrowseBtn.OnClicked(func() {
+		filename := qt.QFileDialog_GetOpenFileName4(cw.QWidget, "Select Private Key", "", "All Files (*)")
+		if filename != "" {
+			cw.sshKeyPathInput.SetText(filename)
+		}
+	})
 
 	// Buttons
 	btnLayout := qt.NewQHBoxLayout(nil)
@@ -120,6 +235,18 @@ func NewConnectWindow(onConnect func()) *ConnectWindow {
 		globalCfg.DB = cw.dbInput.CurrentIndex()
 		globalCfg.NS = cw.nsInput.Text()
 
+		globalCfg.SSHEnabled = cw.sshEnabledCheck.IsChecked()
+		globalCfg.SSHHost = cw.sshHostInput.Text()
+		globalCfg.SSHPort = cw.sshPortInput.Text()
+		globalCfg.SSHUser = cw.sshUserInput.Text()
+		if cw.sshAuthTypeCombo.CurrentIndex() == 1 {
+			globalCfg.SSHAuthType = "key"
+		} else {
+			globalCfg.SSHAuthType = "password"
+		}
+		globalCfg.SSHPass = cw.sshPassInput.Text()
+		globalCfg.SSHKeyPath = cw.sshKeyPathInput.Text()
+
 		if cw.onConnect != nil {
 			cw.onConnect()
 		}
@@ -136,16 +263,68 @@ func NewConnectWindow(onConnect func()) *ConnectWindow {
 		testDB := cw.dbInput.CurrentIndex()
 		testNS := cw.nsInput.Text()
 
-		testAddr := testHost + ":" + testPort
-		client := rsmq.NewClient(testAddr, testPass, testDB, testNS)
+		sshEnabled := cw.sshEnabledCheck.IsChecked()
+		sshHost := cw.sshHostInput.Text()
+		sshPort := cw.sshPortInput.Text()
+		sshUser := cw.sshUserInput.Text()
+		sshAuthType := "password"
+		if cw.sshAuthTypeCombo.CurrentIndex() == 1 {
+			sshAuthType = "key"
+		}
+		sshPass := cw.sshPassInput.Text()
+		sshKeyPath := cw.sshKeyPathInput.Text()
+		// We use globalCfg.SSHKeyPassphrase for test if available, or prompt?
+		// For test, we might want to start fresh or use what's in global if it matches?
+		// Let's assume empty passphrase initially for test.
+		sshKeyPassphrase := globalCfg.SSHKeyPassphrase
 
-		err := client.TestConnection()
+		var dialer func(string, string) (net.Conn, error)
+		var err error
+
+		if sshEnabled {
+			// Helper to try dial
+			tryDial := func(passphrase string) error {
+				dialer, err = rsmq.DialSSH(rsmq.SSHConfig{
+					Host:       sshHost,
+					Port:       sshPort,
+					User:       sshUser,
+					AuthType:   sshAuthType,
+					Password:   sshPass,
+					KeyPath:    sshKeyPath,
+					Passphrase: passphrase,
+				})
+				return err
+			}
+
+			err = tryDial(sshKeyPassphrase)
+			if err != nil && strings.Contains(err.Error(), "passphrase") && sshAuthType == "key" {
+				// Prompt for passphrase
+				var ok bool
+				text := qt.QInputDialog_GetText4(cw.QWidget, "SSH Key Passphrase", "Enter passphrase for private key:", qt.QLineEdit__Password, "", &ok)
+				if ok && text != "" {
+					sshKeyPassphrase = text
+					err = tryDial(text)
+					if err == nil {
+						// Save the successful passphrase globally so Connect works
+						globalCfg.SSHKeyPassphrase = text
+					}
+				}
+			}
+		}
 
 		var toolTip string
 		if err != nil {
-			toolTip = "❌ Error: " + err.Error()
+			toolTip = "❌ SSH Error: " + err.Error()
 		} else {
-			toolTip = "✅ Connection Successful"
+			testAddr := testHost + ":" + testPort
+			client := rsmq.NewClientWithDialer(testAddr, testPass, testDB, testNS, dialer)
+			err = client.TestConnection()
+
+			if err != nil {
+				toolTip = "❌ Redis Error: " + err.Error()
+			} else {
+				toolTip = "✅ Connection Successful"
+			}
 		}
 		cw.testBtn.SetToolTip(toolTip)
 
@@ -445,8 +624,48 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	splitter.SetStretchFactor(1, 3)
 
 	// Initialize Client
+	var dialer func(string, string) (net.Conn, error)
+	if globalCfg.SSHEnabled {
+		// Try to dial with existing passphrase
+		var err error
+		dialer, err = rsmq.DialSSH(rsmq.SSHConfig{
+			Host:       globalCfg.SSHHost,
+			Port:       globalCfg.SSHPort,
+			User:       globalCfg.SSHUser,
+			AuthType:   globalCfg.SSHAuthType,
+			Password:   globalCfg.SSHPass,
+			KeyPath:    globalCfg.SSHKeyPath,
+			Passphrase: globalCfg.SSHKeyPassphrase,
+		})
+		
+		// If failed due to passphrase, prompt
+		if err != nil && strings.Contains(err.Error(), "passphrase") && globalCfg.SSHAuthType == "key" {
+			var ok bool
+			text := qt.QInputDialog_GetText4(mw.QWidget, "SSH Key Passphrase", "Enter passphrase for private key:", qt.QLineEdit__Password, "", &ok)
+			if ok && text != "" {
+				globalCfg.SSHKeyPassphrase = text
+				dialer, err = rsmq.DialSSH(rsmq.SSHConfig{
+					Host:       globalCfg.SSHHost,
+					Port:       globalCfg.SSHPort,
+					User:       globalCfg.SSHUser,
+					AuthType:   globalCfg.SSHAuthType,
+					Password:   globalCfg.SSHPass,
+					KeyPath:    globalCfg.SSHKeyPath,
+					Passphrase: globalCfg.SSHKeyPassphrase,
+				})
+			}
+		}
+
+		if err != nil {
+			qt.QMessageBox_Critical(mw.QWidget, "Connection Error", "Failed to establish SSH tunnel: "+err.Error())
+			// We should probably fail gracefully, but NewRSMQTMainWindow returns *RSMQTMainWindow.
+			// Maybe just return nil or let the client be broken?
+			// If client is broken, operations will fail.
+		}
+	}
+
 	addr := globalCfg.Host + ":" + globalCfg.Port
-	mw.client = rsmq.NewClient(addr, globalCfg.Pass, globalCfg.DB, globalCfg.NS)
+	mw.client = rsmq.NewClientWithDialer(addr, globalCfg.Pass, globalCfg.DB, globalCfg.NS, dialer)
 
 	// Signals
 	mw.queueListView.SelectionModel().OnSelectionChanged(func(selected, deselected *qt.QItemSelection) {

@@ -3,6 +3,7 @@ package rsmq
 import (
 	"errors"
 	"math/rand"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -20,14 +21,24 @@ type Client struct {
 }
 
 func NewClient(addr, password string, db int, ns string) *Client {
+	return NewClientWithDialer(addr, password, db, ns, nil)
+}
+
+func NewClientWithDialer(addr, password string, db int, ns string, dialer func(string, string) (net.Conn, error)) *Client {
 	if ns == "" {
 		ns = "rsmq:"
 	}
-	rdb := redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr:     addr,
 		Password: password,
 		DB:       db,
-	})
+	}
+	if dialer != nil {
+		opts.Dialer = func() (net.Conn, error) {
+			return dialer("tcp", addr)
+		}
+	}
+	rdb := redis.NewClient(opts)
 	return &Client{
 		rdb: rdb,
 		ns:  ns,
