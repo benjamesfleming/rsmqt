@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"os"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/benjamesfleming/rsmqt/lib/rsmq"
 	qt "github.com/mappu/miqt/qt6"
+	"github.com/mappu/miqt/qt6/mainthread"
 )
 
 type Config struct {
@@ -455,7 +457,8 @@ type RSMQTMainWindow struct {
 	actClearQueue *qt.QAction
 	actDelMsg     *qt.QAction
 
-	refreshTimer *qt.QTimer
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
@@ -468,6 +471,7 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	// Actions
 	mw.actDisconnect = qt.NewQAction5("Disconnect", mw.QObject)
 	mw.actDisconnect.OnTriggered(func() {
+		mw.cancel()
 		if onDisconnect != nil {
 			onDisconnect()
 		}
@@ -573,14 +577,15 @@ func NewRSMQTMainWindow(onDisconnect func()) *RSMQTMainWindow {
 	})
 	mw.actDelMsg.SetEnabled(false)
 
-	// Timer
-	mw.refreshTimer = qt.NewQTimer2(mw.QObject)
-	mw.refreshTimer.OnTimeout(func() {
-		if mw.currentQueueStats != nil {
-			mw.UpdateQueueData(mw.currentQueueStats.Name)
-		}
+	// Context & Auto-Refresh
+	mw.ctx, mw.cancel = context.WithCancel(context.Background())
+	mw.startAutoRefresh()
+
+	// Cleanup on close
+	mw.OnCloseEvent(func(super func(event *qt.QCloseEvent), event *qt.QCloseEvent) {
+		mw.cancel()
+		super(event)
 	})
-	mw.refreshTimer.Start(globalCfg.RefreshInterval * 1000)
 
 	// Menu Bar
 	mb := mw.MenuBar()
@@ -734,11 +739,49 @@ func (mw *RSMQTMainWindow) RefreshQueues() {
 	mw.queueListModel.SetStringList(queues)
 }
 
-func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
+func (mw *RSMQTMainWindow) startAutoRefresh() {
+	go func() {
+		for {
+			select {
+			case <-mw.ctx.Done():
+				return
+			case <-time.After(time.Duration(globalCfg.RefreshInterval) * time.Second):
+				var qname string
+				// Safe UI access to get current selection
+				mainthread.Wait(func() {
+					if mw.currentQueueStats != nil {
+						qname = mw.currentQueueStats.Name
+					}
+				})
+
+				if qname == "" {
+					continue
+				}
+
+				// Fetch in background
+				stats, statsErr := mw.client.GetQueueStats(qname)
+				msgs, msgsErr := mw.client.ListMessages(qname)
+
+				// Update UI on main thread
+				mainthread.Wait(func() {
+					// Check if context cancelled or selection changed
+					if mw.ctx.Err() != nil {
+						return
+					}
+					if mw.currentQueueStats == nil || mw.currentQueueStats.Name != qname {
+						return
+					}
+					mw.updateQueueUI(stats, msgs, statsErr, msgsErr)
+				})
+			}
+		}
+	}()
+}
+
+func (mw *RSMQTMainWindow) updateQueueUI(stats *rsmq.QueueStats, msgs []rsmq.Message, statsErr error, msgsErr error) {
 	// Stats
-	stats, err := mw.client.GetQueueStats(qname)
 	mw.statsModel.SetRowCount(0)
-	if err == nil {
+	if statsErr == nil {
 		mw.currentQueueStats = stats
 		data := [][2]string{
 			{"Visibility Timeout", strconv.Itoa(stats.Vt)},
@@ -766,8 +809,7 @@ func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
 	}
 
 	// Messages
-	msgs, err := mw.client.ListMessages(qname)
-	if err == nil {
+	if msgsErr == nil {
 		mw.msgModel.SetRowCount(0)
 		for _, m := range msgs {
 			items := []*qt.QStandardItem{
@@ -780,6 +822,12 @@ func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
 			mw.msgModel.AppendRow(items)
 		}
 	}
+}
+
+func (mw *RSMQTMainWindow) UpdateQueueData(qname string) {
+	stats, statsErr := mw.client.GetQueueStats(qname)
+	msgs, msgsErr := mw.client.ListMessages(qname)
+	mw.updateQueueUI(stats, msgs, statsErr, msgsErr)
 }
 
 func main() {
